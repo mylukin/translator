@@ -76,7 +76,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // 定义版本号
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 func main() {
 	app := &cli.App{
@@ -154,53 +154,109 @@ func translateJSON(c *cli.Context) error {
 	client := openai.NewClientWithConfig(config)
 
 	// 读取输入 JSON 文件
-	data, err := os.ReadFile(inputFile)
+	inputJSON, err := readJSONFile(inputFile)
 	if err != nil {
 		return fmt.Errorf("error reading input file: %v", err)
 	}
 
-	// 解析 JSON 数据
-	var jsonData map[string]string
-	err = json.Unmarshal(data, &jsonData)
+	// 读取输出 JSON 文件（如果存在）
+	outputJSON, err := readJSONFile(outputFile)
 	if err != nil {
-		return fmt.Errorf("error parsing JSON: %v", err)
+		return fmt.Errorf("error reading output file: %v", err)
 	}
+
+	// 合并输入和输出 JSON，保持输入 JSON 的顺序
+	mergedJSON, untranslatedKeys := mergeJSON(inputJSON, outputJSON)
 
 	// 获取目标语言的名称
 	targetLanguage := Code2Lang(languageCode)
 
-	// 翻译 JSON 值
-	translatedData, err := translateJSONValues(client, jsonData, targetLanguage, batchSize)
-	if err != nil {
-		return fmt.Errorf("error translating JSON values: %v", err)
+	// 翻译未翻译的项
+	if len(untranslatedKeys) > 0 {
+		toTranslate := make(map[string]string)
+		for _, key := range untranslatedKeys {
+			toTranslate[key] = mergedJSON[key]
+		}
+
+		translatedData, err := translateJSONValues(client, toTranslate, targetLanguage, batchSize)
+		if err != nil {
+			return fmt.Errorf("error translating JSON values: %v", err)
+		}
+
+		// 更新合并后的 JSON 与翻译结果
+		for key, value := range translatedData {
+			mergedJSON[key] = value
+		}
 	}
 
-	// 将翻译后的 JSON 写入新文件
-	// 使用自定义的 JSON 编码器
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-
-	err = encoder.Encode(translatedData)
-	if err != nil {
-		return fmt.Errorf("error encoding translated JSON: %v", err)
-	}
-
-	// 确保输出目录存在
-	err = os.MkdirAll(filepath.Dir(outputFile), 0755)
-	if err != nil {
-		return fmt.Errorf("error creating output directory: %v", err)
-	}
-
-	// 将编码后的 JSON 写入文件
-	err = os.WriteFile(outputFile, buf.Bytes(), 0644)
+	// 将合并后的 JSON 写入输出文件
+	err = writeJSONFile(outputFile, mergedJSON)
 	if err != nil {
 		return fmt.Errorf("error writing output file: %v", err)
 	}
 
 	fmt.Printf("Translation complete. Output saved to %s\n", outputFile)
 	return nil
+}
+
+func readJSONFile(filename string) (map[string]string, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 如果文件不存在，返回一个空的 map
+			return make(map[string]string), nil
+		}
+		return nil, err
+	}
+
+	var jsonData map[string]string
+	err = json.Unmarshal(data, &jsonData)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing JSON: %v", err)
+	}
+
+	return jsonData, nil
+}
+
+func mergeJSON(input, output map[string]string) (map[string]string, []string) {
+	merged := make(map[string]string)
+	var untranslatedKeys []string
+
+	// 首先，复制输入 JSON 的所有键值对
+	for key, value := range input {
+		merged[key] = value
+		// 如果输出中不存在这个键，或者值与输入相同，认为是未翻译的
+		if outputValue, exists := output[key]; !exists || outputValue == value {
+			untranslatedKeys = append(untranslatedKeys, key)
+		} else {
+			// 如果输出中存在且不同，使用输出中的值（已翻译的值）
+			merged[key] = outputValue
+		}
+	}
+
+	return merged, untranslatedKeys
+}
+
+func writeJSONFile(filename string, data map[string]string) error {
+	// 确保输出目录存在
+	err := os.MkdirAll(filepath.Dir(filename), 0755)
+	if err != nil {
+		return fmt.Errorf("error creating output directory: %v", err)
+	}
+
+	// 使用自定义的 JSON 编码器
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+
+	err = encoder.Encode(data)
+	if err != nil {
+		return fmt.Errorf("error encoding JSON: %v", err)
+	}
+
+	// 将编码后的 JSON 写入文件
+	return os.WriteFile(filename, buf.Bytes(), 0644)
 }
 
 func translateJSONValues(client *openai.Client, data map[string]string, targetLanguage string, batchSize int) (map[string]string, error) {
