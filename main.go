@@ -11,7 +11,6 @@ import (
 	"net/http/httputil"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -237,26 +236,7 @@ func translateJSONValues(client *openai.Client, data map[string]string, targetLa
 }
 
 func translateText(client *openai.Client, texts []string, targetLanguage string) ([]string, error) {
-	// 定义正则表达式来匹配 HTML 标签和表情符号
-	htmlRegex := regexp.MustCompile(`<[^>]+>`)
-	emojiRegex := regexp.MustCompile(`[\p{So}\p{Sk}]`)
-
-	var processedTexts []string
-	var placeholders [][]string
-
-	for _, text := range texts {
-		// 替换 HTML 标签和表情符号为占位符
-		htmlTags := htmlRegex.FindAllString(text, -1)
-		text = htmlRegex.ReplaceAllString(text, "[[HTML]]")
-
-		emojis := emojiRegex.FindAllString(text, -1)
-		text = emojiRegex.ReplaceAllString(text, "[[EMOJI]]")
-
-		processedTexts = append(processedTexts, text)
-		placeholders = append(placeholders, append(htmlTags, emojis...))
-	}
-
-	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and keep [[HTML]] and [[EMOJI]] placeholders intact. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(processedTexts), targetLanguage, strings.Join(processedTexts, "\n"))
+	prompt := fmt.Sprintf("Translate the following %d texts to %s. It is crucial to maintain the original order and preserve all HTML tags exactly as they appear. Do not translate the content inside HTML tags. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(texts), targetLanguage, strings.Join(texts, "\n"))
 
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
@@ -265,7 +245,7 @@ func translateText(client *openai.Client, texts []string, targetLanguage string)
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleSystem,
-					Content: "You are a professional translator. Your task is to translate the given texts accurately. Provide only the translated texts, each on a new line, maintaining the original order. Keep [[HTML]] and [[EMOJI]] placeholders intact. Do not add any comments, explanations, or formatting.",
+					Content: "You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure. Strictly maintain all HTML tags in their original form and position. Translate only the content between tags, not the tags themselves. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.",
 				},
 				{
 					Role:    openai.ChatMessageRoleUser,
@@ -286,12 +266,8 @@ func translateText(client *openai.Client, texts []string, targetLanguage string)
 		return nil, fmt.Errorf("translation mismatch: got %d translations for %d texts", len(translatedTexts), len(texts))
 	}
 
-	// 恢复 HTML 标签和表情符号
+	// 清理翻译后的文本
 	for i, text := range translatedTexts {
-		for _, placeholder := range placeholders[i] {
-			text = strings.Replace(text, "[[HTML]]", placeholder, 1)
-			text = strings.Replace(text, "[[EMOJI]]", placeholder, 1)
-		}
 		translatedTexts[i] = cleanTranslation(text)
 	}
 
