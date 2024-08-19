@@ -75,10 +75,14 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// 定义版本号
+const Version = "0.1.0"
+
 func main() {
 	app := &cli.App{
-		Name:  "json-translator",
-		Usage: "Translate JSON file values using OpenAI API",
+		Name:    "translator",
+		Usage:   "Translate JSON file values using OpenAI API",
+		Version: Version, // 添加版本号
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "input",
