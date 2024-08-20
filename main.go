@@ -83,7 +83,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // 定义版本号
-const Version = "0.1.1"
+const Version = "0.1.2"
 
 func main() {
 	app := &cli.App{
