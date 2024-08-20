@@ -25,6 +25,13 @@ type debugTransport struct {
 }
 
 func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Recovered from panic in DumpRequestOut: %v\n", r)
+		}
+	}()
+
 	// Create the client trace
 	trace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
