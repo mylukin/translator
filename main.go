@@ -83,7 +83,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // 定义版本号
-const Version = "0.1.3"
+const Version = "0.1.4"
 
 func main() {
 	app := &cli.App{
@@ -266,12 +266,16 @@ func writeJSONFile(filename string, data map[string]string) error {
 	return os.WriteFile(filename, buf.Bytes(), 0644)
 }
 
+const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
+
 func translateJSONValues(client *openai.Client, data map[string]string, targetLanguage string, batchSize int) (map[string]string, error) {
 	translatedData := make(map[string]string)
 	keys := make([]string, 0, len(data))
 	values := make([]string, 0, len(data))
 
 	for key, value := range data {
+		// 替换换行符为占位符
+		value = strings.ReplaceAll(value, "\n", newlinePlaceholder)
 		keys = append(keys, key)
 		values = append(values, value)
 
@@ -281,6 +285,8 @@ func translateJSONValues(client *openai.Client, data map[string]string, targetLa
 				return nil, fmt.Errorf("error translating batch: %v", err)
 			}
 			for i, translatedValue := range translatedBatch {
+				// 将占位符替换回换行符
+				translatedValue = strings.ReplaceAll(translatedValue, newlinePlaceholder, "\n")
 				translatedData[keys[i]] = translatedValue
 			}
 			keys = keys[:0]
@@ -295,6 +301,8 @@ func translateJSONValues(client *openai.Client, data map[string]string, targetLa
 			return nil, fmt.Errorf("error translating final batch: %v", err)
 		}
 		for i, translatedValue := range translatedBatch {
+			// 将占位符替换回换行符
+			translatedValue = strings.ReplaceAll(translatedValue, newlinePlaceholder, "\n")
 			translatedData[keys[i]] = translatedValue
 		}
 	}
@@ -303,7 +311,7 @@ func translateJSONValues(client *openai.Client, data map[string]string, targetLa
 }
 
 func translateText(client *openai.Client, texts []string, targetLanguage string) ([]string, error) {
-	prompt := fmt.Sprintf("Translate the following %d texts to %s. It is crucial to maintain the original order and preserve all HTML tags exactly as they appear. Do not translate the content inside HTML tags. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(texts), targetLanguage, strings.Join(texts, "\n"))
+	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and preserve all HTML tags and the placeholder {{NEWLINE_PLACEHOLDER}} exactly as they appear. Do not translate the content inside HTML tags or the placeholder. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(texts), targetLanguage, strings.Join(texts, "\n"))
 
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
@@ -312,7 +320,7 @@ func translateText(client *openai.Client, texts []string, targetLanguage string)
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleSystem,
-					Content: "You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure. Strictly maintain all HTML tags in their original form and position. Translate only the content between tags, not the tags themselves. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.",
+					Content: "You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure and the special placeholder {{NEWLINE_PLACEHOLDER}}. Strictly maintain all HTML tags and the placeholder in their original form and position. Translate only the content between tags, not the tags themselves or the placeholder. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.",
 				},
 				{
 					Role:    openai.ChatMessageRoleUser,
