@@ -20,6 +20,30 @@ import (
 	"golang.org/x/text/language/display"
 )
 
+type OrderedMap struct {
+	keys   []string
+	values map[string]string
+}
+
+func NewOrderedMap() *OrderedMap {
+	return &OrderedMap{
+		keys:   make([]string, 0),
+		values: make(map[string]string),
+	}
+}
+
+func (om *OrderedMap) Set(key, value string) {
+	if _, exists := om.values[key]; !exists {
+		om.keys = append(om.keys, key)
+	}
+	om.values[key] = value
+}
+
+func (om *OrderedMap) Get(key string) (string, bool) {
+	value, exists := om.values[key]
+	return value, exists
+}
+
 type debugTransport struct {
 	Transport http.RoundTripper
 }
@@ -83,7 +107,8 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // 定义版本号
-const Version = "0.1.4"
+const Version = "0.1.5"
+const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
 	app := &cli.App{
@@ -127,29 +152,24 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
 func translateJSON(c *cli.Context) error {
 	inputFile := c.String("input")
 	languageCode := c.String("language")
 	batchSize := c.Int("batchSize")
 	envFile := c.String("env")
 
-	// 设置输出文件路径
 	outputFile := filepath.Join("locales", fmt.Sprintf("%s.json", languageCode))
 
-	// 加载 .env 文件
 	err := godotenv.Load(envFile)
 	if err != nil {
 		return fmt.Errorf("error loading .env file: %v", err)
 	}
 
-	// 从 .env 文件读取 API 密钥
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		return fmt.Errorf("OPENAI_API_KEY not found in .env file")
 	}
 
-	// 创建 OpenAI 客户端
 	config := openai.DefaultConfig(apiKey)
 	apiEndpoint := os.Getenv("OPENAI_API_ENDPOINT")
 	if apiEndpoint != "" {
@@ -160,29 +180,26 @@ func translateJSON(c *cli.Context) error {
 	}
 	client := openai.NewClientWithConfig(config)
 
-	// 读取输入 JSON 文件
 	inputJSON, err := readJSONFile(inputFile)
 	if err != nil {
 		return fmt.Errorf("error reading input file: %v", err)
 	}
 
-	// 读取输出 JSON 文件（如果存在）
 	outputJSON, err := readJSONFile(outputFile)
 	if err != nil {
 		return fmt.Errorf("error reading output file: %v", err)
 	}
 
-	// 合并输入和输出 JSON，保持输入 JSON 的顺序
 	mergedJSON, untranslatedKeys := mergeJSON(inputJSON, outputJSON)
 
-	// 获取目标语言的名称
 	targetLanguage := Code2Lang(languageCode)
 
-	// 翻译未翻译的项
 	if len(untranslatedKeys) > 0 {
-		toTranslate := make(map[string]string)
+		toTranslate := NewOrderedMap()
 		for _, key := range untranslatedKeys {
-			toTranslate[key] = mergedJSON[key]
+			if value, exists := mergedJSON.Get(key); exists {
+				toTranslate.Set(key, value)
+			}
 		}
 
 		translatedData, err := translateJSONValues(client, toTranslate, targetLanguage, batchSize)
@@ -190,13 +207,13 @@ func translateJSON(c *cli.Context) error {
 			return fmt.Errorf("error translating JSON values: %v", err)
 		}
 
-		// 更新合并后的 JSON 与翻译结果
-		for key, value := range translatedData {
-			mergedJSON[key] = value
+		for _, key := range translatedData.keys {
+			if value, exists := translatedData.Get(key); exists {
+				mergedJSON.Set(key, value)
+			}
 		}
 	}
 
-	// 将合并后的 JSON 写入输出文件
 	err = writeJSONFile(outputFile, mergedJSON)
 	if err != nil {
 		return fmt.Errorf("error writing output file: %v", err)
@@ -206,75 +223,118 @@ func translateJSON(c *cli.Context) error {
 	return nil
 }
 
-func readJSONFile(filename string) (map[string]string, error) {
-	data, err := os.ReadFile(filename)
+func readJSONFile(filename string) (*OrderedMap, error) {
+	file, err := os.Open(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// 如果文件不存在，返回一个空的 map
-			return make(map[string]string), nil
+			return NewOrderedMap(), nil
 		}
 		return nil, err
 	}
+	defer file.Close()
 
-	var jsonData map[string]string
-	err = json.Unmarshal(data, &jsonData)
+	decoder := json.NewDecoder(file)
+
+	_, err = decoder.Token()
 	if err != nil {
-		return nil, fmt.Errorf("error parsing JSON: %v", err)
+		return nil, fmt.Errorf("error reading JSON start: %v", err)
 	}
 
-	return jsonData, nil
+	orderedMap := NewOrderedMap()
+
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("error reading JSON key: %v", err)
+		}
+
+		var value string
+		err = decoder.Decode(&value)
+		if err != nil {
+			return nil, fmt.Errorf("error reading JSON value: %v", err)
+		}
+
+		orderedMap.Set(key.(string), value)
+	}
+
+	_, err = decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("error reading JSON end: %v", err)
+	}
+
+	return orderedMap, nil
 }
 
-func mergeJSON(input, output map[string]string) (map[string]string, []string) {
-	merged := make(map[string]string)
+func mergeJSON(input, output *OrderedMap) (*OrderedMap, []string) {
+	merged := NewOrderedMap()
 	var untranslatedKeys []string
 
-	// 首先，复制输入 JSON 的所有键值对
-	for key, value := range input {
-		merged[key] = value
-		// 如果输出中不存在这个键，或者值与输入相同，认为是未翻译的
-		if outputValue, exists := output[key]; !exists || outputValue == value {
+	for _, key := range input.keys {
+		inputValue, _ := input.Get(key)
+		merged.Set(key, inputValue)
+
+		if outputValue, exists := output.Get(key); !exists || outputValue == inputValue {
 			untranslatedKeys = append(untranslatedKeys, key)
 		} else {
-			// 如果输出中存在且不同，使用输出中的值（已翻译的值）
-			merged[key] = outputValue
+			merged.Set(key, outputValue)
 		}
 	}
 
 	return merged, untranslatedKeys
 }
 
-func writeJSONFile(filename string, data map[string]string) error {
-	// 确保输出目录存在
+func writeJSONFile(filename string, data *OrderedMap) error {
 	err := os.MkdirAll(filepath.Dir(filename), 0755)
 	if err != nil {
 		return fmt.Errorf("error creating output directory: %v", err)
 	}
 
-	// 使用自定义的 JSON 编码器
 	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
+	buf.WriteString("{\n")
 
-	err = encoder.Encode(data)
-	if err != nil {
-		return fmt.Errorf("error encoding JSON: %v", err)
+	for i, key := range data.keys {
+		value, _ := data.Get(key)
+
+		// 编码键
+		keyJSON, err := json.Marshal(key)
+		if err != nil {
+			return fmt.Errorf("error encoding key: %v", err)
+		}
+
+		// 编码值
+		valueJSON, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("error encoding value: %v", err)
+		}
+
+		// 写入键值对
+		buf.WriteString(fmt.Sprintf("  %s: %s", keyJSON, valueJSON))
+
+		// 如果不是最后一个元素，添加逗号
+		if i < len(data.keys)-1 {
+			buf.WriteString(",")
+		}
+		buf.WriteString("\n")
 	}
 
-	// 将编码后的 JSON 写入文件
-	return os.WriteFile(filename, buf.Bytes(), 0644)
+	buf.WriteString("}\n")
+
+	// 写入文件
+	err = os.WriteFile(filename, buf.Bytes(), 0644)
+	if err != nil {
+		return fmt.Errorf("error writing to file: %v", err)
+	}
+
+	return nil
 }
 
-const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
+func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage string, batchSize int) (*OrderedMap, error) {
+	translatedData := NewOrderedMap()
+	keys := make([]string, 0, len(data.keys))
+	values := make([]string, 0, len(data.keys))
 
-func translateJSONValues(client *openai.Client, data map[string]string, targetLanguage string, batchSize int) (map[string]string, error) {
-	translatedData := make(map[string]string)
-	keys := make([]string, 0, len(data))
-	values := make([]string, 0, len(data))
-
-	for key, value := range data {
-		// 替换换行符为占位符
+	for _, key := range data.keys {
+		value, _ := data.Get(key)
 		value = strings.ReplaceAll(value, "\n", newlinePlaceholder)
 		keys = append(keys, key)
 		values = append(values, value)
@@ -285,25 +345,22 @@ func translateJSONValues(client *openai.Client, data map[string]string, targetLa
 				return nil, fmt.Errorf("error translating batch: %v", err)
 			}
 			for i, translatedValue := range translatedBatch {
-				// 将占位符替换回换行符
 				translatedValue = strings.ReplaceAll(translatedValue, newlinePlaceholder, "\n")
-				translatedData[keys[i]] = translatedValue
+				translatedData.Set(keys[i], translatedValue)
 			}
 			keys = keys[:0]
 			values = values[:0]
 		}
 	}
 
-	// Translate any remaining items
 	if len(values) > 0 {
 		translatedBatch, err := translateText(client, values, targetLanguage)
 		if err != nil {
 			return nil, fmt.Errorf("error translating final batch: %v", err)
 		}
 		for i, translatedValue := range translatedBatch {
-			// 将占位符替换回换行符
 			translatedValue = strings.ReplaceAll(translatedValue, newlinePlaceholder, "\n")
-			translatedData[keys[i]] = translatedValue
+			translatedData.Set(keys[i], translatedValue)
 		}
 	}
 
