@@ -107,7 +107,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // Define version number
-const Version = "0.1.8"
+const Version = "0.1.9"
 const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
@@ -149,6 +149,13 @@ func main() {
 				Usage:    "Output directory for translated files (default: same as input file)",
 				Required: false,
 			},
+			&cli.StringFlag{
+				Name:     "model",
+				Aliases:  []string{"m"},
+				Usage:    "OpenAI model to use for translation (e.g., gpt-4o, gpt-4o-mini)",
+				Value:    openai.GPT4oMini,
+				Required: false,
+			},
 		},
 		Action: translateJSON,
 	}
@@ -164,6 +171,7 @@ func translateJSON(c *cli.Context) error {
 	batchSize := c.Int("batchSize")
 	envFile := c.String("env")
 	outputDir := c.String("output")
+	model := c.String("model")
 
 	// If no output directory is specified, use the directory of the input file
 	if outputDir == "" {
@@ -217,7 +225,7 @@ func translateJSON(c *cli.Context) error {
 			}
 		}
 
-		translatedData, err := translateJSONValues(client, toTranslate, targetLanguage, batchSize, customPrompt)
+		translatedData, err := translateJSONValues(client, toTranslate, targetLanguage, batchSize, customPrompt, model)
 		if err != nil {
 			return fmt.Errorf("error translating JSON values: %v", err)
 		}
@@ -355,7 +363,7 @@ func writeJSONFile(filename string, data *OrderedMap) error {
 	return nil
 }
 
-func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage string, batchSize int, customPrompt string) (*OrderedMap, error) {
+func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage string, batchSize int, customPrompt string, model string) (*OrderedMap, error) {
 	translatedData := NewOrderedMap()
 	batch := make([]string, 0, batchSize)
 	batchKeys := make([]string, 0, batchSize)
@@ -367,7 +375,7 @@ func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage
 		batchKeys = append(batchKeys, key)
 
 		if len(batch) == batchSize {
-			translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt)
+			translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt, model)
 			if err != nil {
 				return nil, fmt.Errorf("error translating batch: %v", err)
 			}
@@ -382,7 +390,7 @@ func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage
 
 	// Handle remaining items that don't make up a full batch
 	if len(batch) > 0 {
-		translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt)
+		translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt, model)
 		if err != nil {
 			return nil, fmt.Errorf("error translating final batch: %v", err)
 		}
@@ -395,7 +403,7 @@ func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage
 	return translatedData, nil
 }
 
-func translateText(client *openai.Client, texts []string, targetLanguage string, customPrompt string) ([]string, error) {
+func translateText(client *openai.Client, texts []string, targetLanguage string, customPrompt string, model string) ([]string, error) {
 	systemPrompt := fmt.Sprintf("You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure and the special placeholder {{NEWLINE_PLACEHOLDER}}. Strictly maintain all HTML tags and the placeholder in their original form and position. Translate only the content between tags, not the tags themselves or the placeholder. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.")
 
 	if customPrompt != "" {
@@ -407,7 +415,7 @@ func translateText(client *openai.Client, texts []string, targetLanguage string,
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
-			Model: openai.GPT4oMini,
+			Model: model,
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleSystem,
