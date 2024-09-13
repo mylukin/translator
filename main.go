@@ -106,15 +106,15 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// 定义版本号
-const Version = "0.1.7"
+// Define version number
+const Version = "0.1.8"
 const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
 	app := &cli.App{
 		Name:    "translator",
 		Usage:   "Translate JSON file values using OpenAI API",
-		Version: Version, // 添加版本号
+		Version: Version, // Add version number
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "input",
@@ -165,7 +165,7 @@ func translateJSON(c *cli.Context) error {
 	envFile := c.String("env")
 	outputDir := c.String("output")
 
-	// 如果没有指定输出目录，使用输入文件的目录
+	// If no output directory is specified, use the directory of the input file
 	if outputDir == "" {
 		outputDir = filepath.Dir(inputFile)
 	}
@@ -182,7 +182,7 @@ func translateJSON(c *cli.Context) error {
 		return fmt.Errorf("OPENAI_API_KEY not found in .env file")
 	}
 
-	// 读取自定义 prompt
+	// Read custom prompt
 	customPrompt := os.Getenv("CUSTOM_PROMPT")
 
 	config := openai.DefaultConfig(apiKey)
@@ -298,6 +298,18 @@ func mergeJSON(input, output *OrderedMap) (*OrderedMap, []string) {
 	return merged, untranslatedKeys
 }
 
+// New common function for JSON encoding
+func encodeJSON(v interface{}) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	encoder := json.NewEncoder(buf)
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(v)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.TrimSpace(buf.Bytes()), nil
+}
+
 func writeJSONFile(filename string, data *OrderedMap) error {
 	err := os.MkdirAll(filepath.Dir(filename), 0755)
 	if err != nil {
@@ -310,22 +322,22 @@ func writeJSONFile(filename string, data *OrderedMap) error {
 	for i, key := range data.keys {
 		value, _ := data.Get(key)
 
-		// 编码键
-		keyJSON, err := json.Marshal(key)
+		// Encode key
+		keyJSON, err := encodeJSON(key)
 		if err != nil {
 			return fmt.Errorf("error encoding key: %v", err)
 		}
 
-		// 编码值
-		valueJSON, err := json.Marshal(value)
+		// Encode value
+		valueJSON, err := encodeJSON(value)
 		if err != nil {
 			return fmt.Errorf("error encoding value: %v", err)
 		}
 
-		// 写入键值对
+		// Write key-value pair
 		buf.WriteString(fmt.Sprintf("  %s: %s", keyJSON, valueJSON))
 
-		// 如果不是最后一个元素，添加逗号
+		// Add comma if not the last element
 		if i < len(data.keys)-1 {
 			buf.WriteString(",")
 		}
@@ -334,7 +346,7 @@ func writeJSONFile(filename string, data *OrderedMap) error {
 
 	buf.WriteString("}\n")
 
-	// 写入文件
+	// Write to file
 	err = os.WriteFile(filename, buf.Bytes(), 0644)
 	if err != nil {
 		return fmt.Errorf("error writing to file: %v", err)
@@ -368,7 +380,7 @@ func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage
 		}
 	}
 
-	// 处理剩余的不足一个批次的项目
+	// Handle remaining items that don't make up a full batch
 	if len(batch) > 0 {
 		translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt)
 		if err != nil {
@@ -415,12 +427,12 @@ func translateText(client *openai.Client, texts []string, targetLanguage string,
 
 	translatedTexts := strings.Split(resp.Choices[0].Message.Content, "\n")
 
-	// 确保翻译后的文本数量与原文本数量相同
+	// Ensure the number of translated texts matches the number of original texts
 	if len(translatedTexts) != len(texts) {
 		return nil, fmt.Errorf("translation mismatch: got %d translations for %d texts", len(translatedTexts), len(texts))
 	}
 
-	// 清理翻译后的文本
+	// Clean up the translated texts
 	for i, text := range translatedTexts {
 		translatedTexts[i] = cleanTranslation(text)
 	}
@@ -429,7 +441,7 @@ func translateText(client *openai.Client, texts []string, targetLanguage string,
 }
 
 func cleanTranslation(translation string) string {
-	// 只移除首尾的空白字符
+	// Remove only leading and trailing whitespace
 	return strings.TrimSpace(translation)
 }
 
