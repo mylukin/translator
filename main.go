@@ -133,7 +133,7 @@ func main() {
 				Name:     "batchSize",
 				Aliases:  []string{"b"},
 				Usage:    "Number of texts to translate in each batch",
-				Value:    255,
+				Value:    100,
 				Required: false,
 			},
 			&cli.StringFlag{
@@ -141,6 +141,12 @@ func main() {
 				Aliases:  []string{"e"},
 				Usage:    "Path to .env file",
 				Value:    ".env",
+				Required: false,
+			},
+			&cli.StringFlag{
+				Name:     "output",
+				Aliases:  []string{"o"},
+				Usage:    "Output directory for translated files (default: same as input file)",
 				Required: false,
 			},
 		},
@@ -157,8 +163,14 @@ func translateJSON(c *cli.Context) error {
 	languageCode := c.String("language")
 	batchSize := c.Int("batchSize")
 	envFile := c.String("env")
+	outputDir := c.String("output")
 
-	outputFile := filepath.Join("locales", fmt.Sprintf("%s.json", languageCode))
+	// 如果没有指定输出目录，使用输入文件的目录
+	if outputDir == "" {
+		outputDir = filepath.Dir(inputFile)
+	}
+
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s.json", languageCode))
 
 	err := godotenv.Load(envFile)
 	if err != nil {
@@ -169,6 +181,9 @@ func translateJSON(c *cli.Context) error {
 	if apiKey == "" {
 		return fmt.Errorf("OPENAI_API_KEY not found in .env file")
 	}
+
+	// 读取自定义 prompt
+	customPrompt := os.Getenv("CUSTOM_PROMPT")
 
 	config := openai.DefaultConfig(apiKey)
 	apiEndpoint := os.Getenv("OPENAI_API_ENDPOINT")
@@ -202,7 +217,7 @@ func translateJSON(c *cli.Context) error {
 			}
 		}
 
-		translatedData, err := translateJSONValues(client, toTranslate, targetLanguage, batchSize)
+		translatedData, err := translateJSONValues(client, toTranslate, targetLanguage, batchSize, customPrompt)
 		if err != nil {
 			return fmt.Errorf("error translating JSON values: %v", err)
 		}
@@ -328,46 +343,53 @@ func writeJSONFile(filename string, data *OrderedMap) error {
 	return nil
 }
 
-func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage string, batchSize int) (*OrderedMap, error) {
+func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage string, batchSize int, customPrompt string) (*OrderedMap, error) {
 	translatedData := NewOrderedMap()
-	keys := make([]string, 0, len(data.keys))
-	values := make([]string, 0, len(data.keys))
+	batch := make([]string, 0, batchSize)
+	batchKeys := make([]string, 0, batchSize)
 
 	for _, key := range data.keys {
 		value, _ := data.Get(key)
 		value = strings.ReplaceAll(value, "\n", newlinePlaceholder)
-		keys = append(keys, key)
-		values = append(values, value)
+		batch = append(batch, value)
+		batchKeys = append(batchKeys, key)
 
-		if len(values) == batchSize {
-			translatedBatch, err := translateText(client, values, targetLanguage)
+		if len(batch) == batchSize {
+			translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt)
 			if err != nil {
 				return nil, fmt.Errorf("error translating batch: %v", err)
 			}
 			for i, translatedValue := range translatedBatch {
 				translatedValue = strings.ReplaceAll(translatedValue, newlinePlaceholder, "\n")
-				translatedData.Set(keys[i], translatedValue)
+				translatedData.Set(batchKeys[i], translatedValue)
 			}
-			keys = keys[:0]
-			values = values[:0]
+			batch = batch[:0]
+			batchKeys = batchKeys[:0]
 		}
 	}
 
-	if len(values) > 0 {
-		translatedBatch, err := translateText(client, values, targetLanguage)
+	// 处理剩余的不足一个批次的项目
+	if len(batch) > 0 {
+		translatedBatch, err := translateText(client, batch, targetLanguage, customPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("error translating final batch: %v", err)
 		}
 		for i, translatedValue := range translatedBatch {
 			translatedValue = strings.ReplaceAll(translatedValue, newlinePlaceholder, "\n")
-			translatedData.Set(keys[i], translatedValue)
+			translatedData.Set(batchKeys[i], translatedValue)
 		}
 	}
 
 	return translatedData, nil
 }
 
-func translateText(client *openai.Client, texts []string, targetLanguage string) ([]string, error) {
+func translateText(client *openai.Client, texts []string, targetLanguage string, customPrompt string) ([]string, error) {
+	systemPrompt := fmt.Sprintf("You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure and the special placeholder {{NEWLINE_PLACEHOLDER}}. Strictly maintain all HTML tags and the placeholder in their original form and position. Translate only the content between tags, not the tags themselves or the placeholder. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.")
+
+	if customPrompt != "" {
+		systemPrompt += " " + customPrompt
+	}
+
 	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and preserve all HTML tags and the placeholder {{NEWLINE_PLACEHOLDER}} exactly as they appear. Do not translate the content inside HTML tags or the placeholder. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(texts), targetLanguage, strings.Join(texts, "\n"))
 
 	resp, err := client.CreateChatCompletion(
@@ -377,7 +399,7 @@ func translateText(client *openai.Client, texts []string, targetLanguage string)
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleSystem,
-					Content: "You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure and the special placeholder {{NEWLINE_PLACEHOLDER}}. Strictly maintain all HTML tags and the placeholder in their original form and position. Translate only the content between tags, not the tags themselves or the placeholder. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.",
+					Content: systemPrompt,
 				},
 				{
 					Role:    openai.ChatMessageRoleUser,
