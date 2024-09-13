@@ -107,7 +107,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // 定义版本号
-const Version = "0.1.6"
+const Version = "0.1.7"
 const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
