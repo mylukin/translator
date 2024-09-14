@@ -107,7 +107,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // Define version number
-const Version = "0.1.9"
+const Version = "0.1.10"
 const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
@@ -404,13 +404,34 @@ func translateJSONValues(client *openai.Client, data *OrderedMap, targetLanguage
 }
 
 func translateText(client *openai.Client, texts []string, targetLanguage string, customPrompt string, model string) ([]string, error) {
+	// 检查texts是否为空
+	if len(texts) == 0 {
+		return []string{}, nil
+	}
+
+	// 过滤掉空白文本
+	var nonEmptyTexts []string
+	var nonEmptyIndices []int
+	for i, text := range texts {
+		trimmedText := strings.TrimSpace(text)
+		if trimmedText != "" {
+			nonEmptyTexts = append(nonEmptyTexts, text)
+			nonEmptyIndices = append(nonEmptyIndices, i)
+		}
+	}
+
+	// 如果所有文本都是空白的，直接返回原始文本
+	if len(nonEmptyTexts) == 0 {
+		return texts, nil
+	}
+
 	systemPrompt := fmt.Sprintf("You are a professional translator specializing in localizing web content. Your task is to translate the given texts accurately while preserving all HTML structure and the special placeholder {{NEWLINE_PLACEHOLDER}}. Strictly maintain all HTML tags and the placeholder in their original form and position. Translate only the content between tags, not the tags themselves or the placeholder. Provide only the translated texts, each on a new line, maintaining the original order. Do not add any comments, explanations, or additional formatting.")
 
 	if customPrompt != "" {
 		systemPrompt += " " + customPrompt
 	}
 
-	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and preserve all HTML tags and the placeholder {{NEWLINE_PLACEHOLDER}} exactly as they appear. Do not translate the content inside HTML tags or the placeholder. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(texts), targetLanguage, strings.Join(texts, "\n"))
+	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and preserve all HTML tags and the placeholder {{NEWLINE_PLACEHOLDER}} exactly as they appear. Do not translate the content inside HTML tags or the placeholder. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(nonEmptyTexts), targetLanguage, strings.Join(nonEmptyTexts, "\n"))
 
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
@@ -436,8 +457,8 @@ func translateText(client *openai.Client, texts []string, targetLanguage string,
 	translatedTexts := strings.Split(resp.Choices[0].Message.Content, "\n")
 
 	// Ensure the number of translated texts matches the number of original texts
-	if len(translatedTexts) != len(texts) {
-		return nil, fmt.Errorf("translation mismatch: got %d translations for %d texts", len(translatedTexts), len(texts))
+	if len(translatedTexts) != len(nonEmptyTexts) {
+		return nil, fmt.Errorf("translation mismatch: got %d translations for %d texts", len(translatedTexts), len(nonEmptyTexts))
 	}
 
 	// Clean up the translated texts
@@ -445,7 +466,14 @@ func translateText(client *openai.Client, texts []string, targetLanguage string,
 		translatedTexts[i] = cleanTranslation(text)
 	}
 
-	return translatedTexts, nil
+	// 将翻译结果放回原始位置
+	result := make([]string, len(texts))
+	copy(result, texts)
+	for i, translatedText := range translatedTexts {
+		result[nonEmptyIndices[i]] = cleanTranslation(translatedText)
+	}
+
+	return result, nil
 }
 
 func cleanTranslation(translation string) string {
