@@ -107,7 +107,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // Define version number
-const Version = "0.1.10"
+const Version = "0.1.11"
 const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
@@ -431,7 +431,7 @@ func translateText(client *openai.Client, texts []string, targetLanguage string,
 		systemPrompt += " " + customPrompt
 	}
 
-	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and preserve all HTML tags and the placeholder {{NEWLINE_PLACEHOLDER}} exactly as they appear. Do not translate the content inside HTML tags or the placeholder. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting:\n\n%s", len(nonEmptyTexts), targetLanguage, strings.Join(nonEmptyTexts, "\n"))
+	prompt := fmt.Sprintf("Translate the following %d texts to %s. Maintain the original order and preserve all HTML tags and the placeholder {{NEWLINE_PLACEHOLDER}} exactly as they appear. Do not translate the content inside HTML tags or the placeholder. Return each translated text on a new line, without any explanations, quotation marks, line numbers, or additional formatting.\n------------ The following is the content that needs to be translated ------------\n\n%s", len(nonEmptyTexts), targetLanguage, strings.Join(nonEmptyTexts, "\n"))
 
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
