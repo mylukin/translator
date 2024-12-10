@@ -107,7 +107,7 @@ func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // Define version number
-const Version = "0.1.11"
+const Version = "0.1.12"
 const newlinePlaceholder = "{{NEWLINE_PLACEHOLDER}}"
 
 func main() {
@@ -150,6 +150,12 @@ func main() {
 				Required: false,
 			},
 			&cli.StringFlag{
+				Name:     "filename",
+				Aliases:  []string{"f"},
+				Usage:    "Custom output filename (without extension, default: language code)",
+				Required: false,
+			},
+			&cli.StringFlag{
 				Name:     "model",
 				Aliases:  []string{"m"},
 				Usage:    "OpenAI model to use for translation (e.g., gpt-4o, gpt-4o-mini)",
@@ -165,12 +171,14 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
 func translateJSON(c *cli.Context) error {
 	inputFile := c.String("input")
 	languageCode := c.String("language")
 	batchSize := c.Int("batchSize")
 	envFile := c.String("env")
 	outputDir := c.String("output")
+	customFilename := c.String("filename")
 	model := c.String("model")
 
 	// If no output directory is specified, use the directory of the input file
@@ -178,7 +186,12 @@ func translateJSON(c *cli.Context) error {
 		outputDir = filepath.Dir(inputFile)
 	}
 
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s.json", languageCode))
+	// Use custom filename if provided, otherwise use language code
+	outFilename := languageCode
+	if customFilename != "" {
+		outFilename = customFilename
+	}
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s.json", outFilename))
 
 	err := godotenv.Load(envFile)
 	if err != nil {
