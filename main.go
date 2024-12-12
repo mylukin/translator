@@ -309,7 +309,7 @@ func mergeJSON(input, output *OrderedMap) (*OrderedMap, []string) {
 		inputValue, _ := input.Get(key)
 		merged.Set(key, inputValue)
 
-		if outputValue, exists := output.Get(key); !exists || outputValue == inputValue {
+		if outputValue, exists := output.Get(key); !exists || key == outputValue {
 			untranslatedKeys = append(untranslatedKeys, key)
 		} else {
 			merged.Set(key, outputValue)
